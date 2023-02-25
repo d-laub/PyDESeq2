@@ -133,7 +133,7 @@ class DeseqStats:
         if contrast is not None:  # Test contrast if provided
             assert len(contrast) == 3, "The contrast should contain three strings."
             assert (
-                contrast[0] in self.dds.design_factors
+                contrast[0] in self.dds.formula
             ), "The contrast variable should be one of the design factors."
             assert (
                 contrast[1] in self.dds.obs[contrast[0]].values
@@ -141,7 +141,7 @@ class DeseqStats:
             ), "The contrast levels should correspond to design factors levels."
             self.contrast = contrast
         else:  # Build contrast if None
-            factor = self.dds.design_factors[-1]
+            factor = self.dds.formula[-1]
             levels = np.unique(self.dds.obs[factor]).astype(str)
             if (
                 "_".join([factor, levels[0]])

@@ -1,8 +1,6 @@
 import time
 import warnings
-from typing import List
 from typing import Optional
-from typing import Union
 from typing import cast
 
 import anndata as ad  # type: ignore
@@ -153,7 +151,7 @@ class DeseqDataSet(ad.AnnData):
         self,
         counts: pd.DataFrame,
         clinical: pd.DataFrame,
-        design_factors: Union[str, List[str]] = "condition",
+        formula: str,
         reference_level: Optional[str] = None,
         min_mu: float = 0.5,
         min_disp: float = 1e-8,
@@ -172,22 +170,13 @@ class DeseqDataSet(ad.AnnData):
         # Initialize the AnnData part
         super().__init__(X=counts, obs=clinical, dtype=int)
 
-        # Convert design_factors to list if a single string was provided.
-        self.design_factors = (
-            [design_factors] if isinstance(design_factors, str) else design_factors
-        )
-        if self.obs[self.design_factors].isna().any().any():
-            raise ValueError("NaNs are not allowed in the design factors.")
-        self.obs[self.design_factors] = self.obs[self.design_factors].astype(str)
+        self.formula = formula
 
         # Build the design matrix
-        # Stored in the obsm attribute of the dataset
+        # Store in the obsm attribute of the dataset
         self.obsm["design_matrix"] = build_design_matrix(
             clinical_df=self.obs,
-            design_factors=self.design_factors,
-            ref=reference_level,
-            expanded=False,
-            intercept=True,
+            formula=self.formula,
         )
 
         self.min_mu = min_mu
@@ -265,6 +254,7 @@ class DeseqDataSet(ad.AnnData):
         # groups. If there are as many different factor combinations as design factors
         # (intercept included), it is fitted with a linear model, otherwise it is fitted
         # with a GLM (using rough dispersion estimates).
+        # TODO: verify the value_counts() check works with arbitrary design matrices
         if (
             len(self.obsm["design_matrix"].value_counts())
             == self.obsm["design_matrix"].shape[-1]
@@ -360,11 +350,14 @@ class DeseqDataSet(ad.AnnData):
             self[:, self.non_zero_genes].varm["genewise_dispersions"].copy(),
             index=self.non_zero_genes,
         )
-        covariates = sm.add_constant(
-            pd.Series(
-                1 / self[:, self.non_zero_genes].varm["_normed_means"],
-                index=self.non_zero_genes,
-            )
+        covariates = cast(
+            pd.DataFrame,
+            sm.add_constant(
+                pd.Series(
+                    1 / self[:, self.non_zero_genes].varm["_normed_means"],
+                    index=self.non_zero_genes,
+                )
+            ),
         )
 
         for gene in self.non_zero_genes:
@@ -393,7 +386,8 @@ class DeseqDataSet(ad.AnnData):
             # Filter out genes that are too far away from the curve before refitting
             predictions = covariates.values @ coeffs
             pred_ratios = (
-                self[:, covariates.index].varm["genewise_dispersions"] / predictions
+                self[:, covariates.index.values].varm["genewise_dispersions"]
+                / predictions
             )
 
             targets.drop(
@@ -642,6 +636,7 @@ class DeseqDataSet(ad.AnnData):
             alpha_hat, self.min_disp, self.max_disp
         )
 
+    # TODO: verify the grouping logic works with arbitrary design matrices
     def _replace_outliers(self) -> None:
         """Replace values that are filtered out based
         on the Cooks distance with imputed values.
@@ -736,7 +731,7 @@ class DeseqDataSet(ad.AnnData):
                 columns=self.counts_to_refit.var_names,
             ),
             clinical=self.obs,
-            design_factors=self.design_factors,
+            formula=self.formula,
             min_mu=self.min_mu,
             min_disp=self.min_disp,
             max_disp=self.max_disp,

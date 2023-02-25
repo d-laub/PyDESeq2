@@ -1,7 +1,6 @@
 import multiprocessing
 from math import floor
 from pathlib import Path
-from typing import List
 from typing import Literal
 from typing import Optional
 from typing import Tuple
@@ -10,6 +9,7 @@ from typing import cast
 
 import numpy as np
 import pandas as pd
+from formulaic import model_matrix
 from scipy.linalg import solve  # type: ignore
 from scipy.optimize import minimize  # type: ignore
 from scipy.special import gammaln  # type: ignore
@@ -132,81 +132,9 @@ def test_valid_counts(counts_df: pd.DataFrame) -> None:
 
 def build_design_matrix(
     clinical_df: pd.DataFrame,
-    design_factors: Union[str, List[str]] = "condition",
-    ref: Optional[str] = None,
-    expanded: bool = False,
-    intercept: bool = True,
+    formula: str,
 ) -> pd.DataFrame:
-    """Build design_matrix matrix for DEA.
-
-    Only single factor, 2-level designs are currently supported.
-    Unless specified, the reference factor is chosen alphabetically.
-    NOTE: For now, each factor should have exactly two levels.
-
-    Parameters
-    ----------
-    clinical_df : pandas.DataFrame
-        DataFrame containing clinical information.
-        Must be indexed by sample barcodes.
-
-    design_factors : str or list
-        Name of the columns of clinical_df to be used as design_matrix variables.
-        (default: ``"condition"``).
-
-    ref : str
-        The factor to use as a reference. Must be one of the values taken by the design.
-        If None, the reference will be chosen alphabetically (last in order).
-        (default: ``None``).
-
-    expanded : bool
-        If true, use one column per category. Else, use a single column.
-        (default: ``False``).
-
-    intercept : bool
-        If true, add an intercept (a column containing only ones). (default: ``True``).
-
-    Returns
-    -------
-    pandas.DataFrame
-        A DataFrame with experiment design information (to split cohorts).
-        Indexed by sample barcodes.
-    """
-
-    if isinstance(
-        design_factors, str
-    ):  # if there is a single factor, convert to singleton list
-        design_factors = [design_factors]
-
-    design_matrix = pd.get_dummies(clinical_df[design_factors])
-
-    for factor in design_factors:
-        # Check that each factor has exactly 2 levels
-        if len(np.unique(clinical_df[factor])) != 2:
-            raise ValueError(
-                f"Factors should take exactly two values, but {factor} "
-                f"takes values {np.unique(clinical_df[factor])}."
-            )
-    factor = design_factors[-1]
-    if ref is None:
-        ref = "_".join([factor, np.sort(np.unique(clinical_df[factor]).astype(str))[0]])
-        ref_level = design_matrix.pop(ref)
-    else:  # Put reference level last
-        try:
-            ref_level = design_matrix.pop(f"{factor}_{ref}")
-        except KeyError as e:
-            print(
-                "The reference level must correspond to"
-                " one of the design factor values."
-            )
-            raise e
-    design_matrix.insert(design_matrix.shape[-1], ref, ref_level)
-    if not expanded:  # drop duplicate factors
-        design_matrix.drop(
-            columns=[col for col in design_matrix.columns[::-2]], axis=1, inplace=True
-        )  # Drops every other column, starting from the last
-    if intercept:
-        design_matrix.insert(0, "intercept", 1)
-    return design_matrix
+    return cast(pd.DataFrame, model_matrix(formula, clinical_df, output="pandas"))
 
 
 def dispersion_trend(
